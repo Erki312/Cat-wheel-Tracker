@@ -714,9 +714,9 @@ static void format_distance_short(double meters, char *out, size_t len) {
 static void format_speed_short(double mps, char *out, size_t len) {
     double kmh = clamp_speed_mps(mps) * 3.6;
     if (kmh < 10.0) {
-        snprintf(out, len, "%.1fkm/h", kmh);
+        snprintf(out, len, " %.1fkmh", kmh);
     } else {
-        snprintf(out, len, "%.0fkm/h", kmh);
+        snprintf(out, len, " %.0fkmh", kmh);
     }
 }
 

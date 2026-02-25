@@ -1,5 +1,9 @@
 ﻿// Split from main.c: LED matrix rendering and scan task
 
+#ifndef CAT_WHEEL_INTERNAL_MODULE_BUILD
+#error "matrix_driver_module.c must be included from main.c (do not add to SRCS)."
+#endif
+
 static void render_task_fn(void *arg) {
     char value[16];
     char line[24];

@@ -12,6 +12,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_netif_net_stack.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
@@ -21,6 +22,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lwip/ip4_addr.h"
+#include "lwip/apps/mdns.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "rom/ets_sys.h"
@@ -102,6 +104,7 @@
 
 #define WIFI_AP_SSID "CatWheelSetup"
 #define WIFI_AP_PASS "catwheel123"
+#define CATWHEEL_HOSTNAME "catwheel"
 
 #define CONFIG_VERSION 3U
 #define STATS_VERSION 1U
@@ -113,6 +116,11 @@ typedef enum {
     MATRIX_MODE_RUNNING_ONLY = 1,
     MATRIX_MODE_AUTO_TIMEOUT = 2,
 } matrix_mode_t;
+
+typedef enum {
+    UI_LANGUAGE_EN = 0,
+    UI_LANGUAGE_DE = 1,
+} ui_language_t;
 
 typedef enum {
     METRIC_TOTAL_DISTANCE = 0,
@@ -251,6 +259,13 @@ static int64_t s_mono_anchor_us;
 static httpd_handle_t s_httpd = NULL;
 static int s_wifi_retry_count;
 static bool s_sntp_started;
+#if defined(LWIP_MDNS_RESPONDER) && LWIP_MDNS_RESPONDER
+static bool s_mdns_started;
+#endif
+static esp_netif_t *s_netif_sta = NULL;
+static esp_netif_t *s_netif_ap = NULL;
+static ui_language_t s_ui_language = UI_LANGUAGE_EN;
+static bool s_ui_language_dirty;
 
 static void configure_task_wdt(void) {
 #if CONFIG_ESP_TASK_WDT
@@ -299,6 +314,17 @@ static inline matrix_mode_t matrix_mode_from_str(const char *mode) {
         return MATRIX_MODE_RUNNING_ONLY;
     }
     return MATRIX_MODE_AUTO_TIMEOUT;
+}
+
+static inline const char *ui_language_to_str(ui_language_t lang) {
+    return (lang == UI_LANGUAGE_DE) ? "de" : "en";
+}
+
+static inline ui_language_t ui_language_from_str(const char *value) {
+    if (value != NULL && strcmp(value, "de") == 0) {
+        return UI_LANGUAGE_DE;
+    }
+    return UI_LANGUAGE_EN;
 }
 
 static inline double clamp_speed_mps(double mps) {
@@ -364,6 +390,7 @@ static void format_iso_time(int64_t epoch_s, char *buf, size_t len) {
     strftime(buf, len, "%Y-%m-%d %H:%M:%S", &local_tm);
 }
 
+#define CAT_WHEEL_INTERNAL_MODULE_BUILD 1
 #include "data_logging_module.c"
 #include "matrix_driver_module.c"
 
@@ -375,6 +402,7 @@ static void save_task_fn(void *arg) {
 }
 
 #include "web_server_module.c"
+#undef CAT_WHEEL_INTERNAL_MODULE_BUILD
 
 void app_main(void) {
     esp_err_t err = nvs_flash_init();

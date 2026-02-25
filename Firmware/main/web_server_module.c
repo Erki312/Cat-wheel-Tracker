@@ -1,5 +1,9 @@
 ﻿// Split from main.c: WiFi and HTTP API
 
+#ifndef CAT_WHEEL_INTERNAL_MODULE_BUILD
+#error "web_server_module.c must be included from main.c (do not add to SRCS)."
+#endif
+
 static void sntp_time_sync_cb(struct timeval *tv) {
     (void)tv;
     refresh_time_anchor();
@@ -19,6 +23,69 @@ static void start_sntp_if_needed(void) {
     esp_sntp_set_time_sync_notification_cb(sntp_time_sync_cb);
     esp_sntp_init();
     s_sntp_started = true;
+}
+
+#if defined(LWIP_MDNS_RESPONDER) && LWIP_MDNS_RESPONDER
+static void mdns_txt_cb(struct mdns_service *service, void *txt_userdata) {
+    (void)txt_userdata;
+    if (service == NULL) {
+        return;
+    }
+    mdns_resp_add_service_txtitem(service, "path=/", 6);
+}
+#endif
+
+static void start_mdns_if_needed(void) {
+#if defined(LWIP_MDNS_RESPONDER) && LWIP_MDNS_RESPONDER
+    if (s_mdns_started) {
+        return;
+    }
+
+    mdns_resp_init();
+
+    struct netif *ap_netif =
+        (s_netif_ap != NULL) ? (struct netif *)esp_netif_get_netif_impl(s_netif_ap) : NULL;
+    struct netif *sta_netif =
+        (s_netif_sta != NULL) ? (struct netif *)esp_netif_get_netif_impl(s_netif_sta) : NULL;
+
+    if (ap_netif != NULL) {
+        err_t err = mdns_resp_add_netif(ap_netif, CATWHEEL_HOSTNAME);
+        if (err != ERR_OK) {
+            ESP_LOGW(TAG, "mDNS add AP netif failed: %d", (int)err);
+        } else {
+            s8_t srv = mdns_resp_add_service(ap_netif, "Cat Wheel", "_http",
+                                             DNSSD_PROTO_TCP, 80, mdns_txt_cb, NULL);
+            if (srv < 0) {
+                ESP_LOGW(TAG, "mDNS add AP service failed: %d", (int)srv);
+            }
+        }
+    }
+
+    if (sta_netif != NULL) {
+        err_t err = mdns_resp_add_netif(sta_netif, CATWHEEL_HOSTNAME);
+        if (err != ERR_OK) {
+            ESP_LOGW(TAG, "mDNS add STA netif failed: %d", (int)err);
+        } else {
+            s8_t srv = mdns_resp_add_service(sta_netif, "Cat Wheel", "_http",
+                                             DNSSD_PROTO_TCP, 80, mdns_txt_cb, NULL);
+            if (srv < 0) {
+                ESP_LOGW(TAG, "mDNS add STA service failed: %d", (int)srv);
+            }
+        }
+    }
+
+    if (ap_netif != NULL) {
+        mdns_resp_announce(ap_netif);
+    }
+    if (sta_netif != NULL) {
+        mdns_resp_announce(sta_netif);
+    }
+
+    s_mdns_started = true;
+    ESP_LOGI(TAG, "mDNS ready: http://%s.local", CATWHEEL_HOSTNAME);
+#else
+    ESP_LOGW(TAG, "mDNS responder disabled in build");
+#endif
 }
 
 static void wifi_apply_sta_config(void) {
@@ -100,7 +167,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             if (mode_err != ESP_OK) {
                 ESP_LOGW(TAG, "switch to APSTA failed: %s", esp_err_to_name(mode_err));
             } else {
-                ESP_LOGI(TAG, "AP fallback active: http://192.168.4.1");
+                ESP_LOGI(TAG, "AP fallback active: http://192.168.4.1, mDNS: http://%s.local",
+                         CATWHEEL_HOSTNAME);
             }
             s_wifi_retry_count++;
             esp_wifi_connect();
@@ -120,8 +188,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         if (mode_err != ESP_OK) {
             ESP_LOGW(TAG, "disable AP failed: %s", esp_err_to_name(mode_err));
         } else {
-            ESP_LOGI(TAG, "STA connected, AP off: http://" IPSTR, IP2STR(&event->ip_info.ip));
+            ESP_LOGI(TAG, "STA connected: http://" IPSTR ", mDNS: http://%s.local",
+                     IP2STR(&event->ip_info.ip), CATWHEEL_HOSTNAME);
         }
+#if defined(LWIP_MDNS_RESPONDER) && LWIP_MDNS_RESPONDER
+        if (s_mdns_started && s_netif_sta != NULL) {
+            struct netif *sta_netif = (struct netif *)esp_netif_get_netif_impl(s_netif_sta);
+            if (sta_netif != NULL) {
+                mdns_resp_announce(sta_netif);
+            }
+        }
+#endif
         start_sntp_if_needed();
         refresh_time_anchor();
     }
@@ -130,8 +207,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
 static void wifi_init_all(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-    esp_netif_create_default_wifi_ap();
+    s_netif_sta = esp_netif_create_default_wifi_sta();
+    s_netif_ap = esp_netif_create_default_wifi_ap();
+    if (s_netif_sta != NULL) {
+        esp_netif_set_hostname(s_netif_sta, CATWHEEL_HOSTNAME);
+    }
+    if (s_netif_ap != NULL) {
+        esp_netif_set_hostname(s_netif_ap, CATWHEEL_HOSTNAME);
+    }
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -174,7 +257,9 @@ static void wifi_init_all(void) {
     }
 
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "AP available: http://192.168.4.1");
+    start_mdns_if_needed();
+    ESP_LOGI(TAG, "AP available: http://192.168.4.1, mDNS: http://%s.local",
+             CATWHEEL_HOSTNAME);
 }
 
 static esp_err_t read_request_body(httpd_req_t *req, char **body) {
@@ -274,11 +359,13 @@ static uint16_t parse_minutes_field(const cJSON *obj, const char *key, uint16_t 
 
 static esp_err_t root_get_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, catwheel_get_dashboard_page(), HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t settings_get_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, catwheel_get_settings_page(), HTTPD_RESP_USE_STRLEN);
 }
 
@@ -336,6 +423,7 @@ static cJSON *build_config_json_locked(void) {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "wifi_ssid", s_config.wifi_ssid);
     cJSON_AddStringToObject(root, "wifi_pass", "");
+    cJSON_AddStringToObject(root, "language", ui_language_to_str(s_ui_language));
     cJSON_AddStringToObject(root, "matrix_mode", matrix_mode_to_str(s_config.matrix_mode));
     cJSON_AddNumberToObject(root, "auto_off_sec", s_config.auto_off_sec);
     cJSON_AddNumberToObject(root, "meters_per_pulse", s_config.meters_per_pulse);
@@ -465,6 +553,15 @@ static esp_err_t config_post_handler(httpd_req_t *req) {
                 wifi_changed = true;
             }
             strlcpy(updated.wifi_pass, wifi_pass->valuestring, sizeof(updated.wifi_pass));
+        }
+    }
+
+    const cJSON *language = cJSON_GetObjectItemCaseSensitive(json, "language");
+    if (cJSON_IsString(language) && language->valuestring != NULL) {
+        ui_language_t parsed = ui_language_from_str(language->valuestring);
+        if (parsed != s_ui_language) {
+            s_ui_language = parsed;
+            s_ui_language_dirty = true;
         }
     }
 
@@ -672,6 +769,7 @@ static esp_err_t backup_get_handler(httpd_req_t *req) {
     cJSON *config = cJSON_CreateObject();
     cJSON_AddStringToObject(config, "wifi_ssid", cfg.wifi_ssid);
     cJSON_AddBoolToObject(config, "wifi_pass_set", cfg.wifi_pass[0] != '\0');
+    cJSON_AddStringToObject(config, "language", ui_language_to_str(s_ui_language));
     cJSON_AddStringToObject(config, "matrix_mode", matrix_mode_to_str(cfg.matrix_mode));
     cJSON_AddNumberToObject(config, "auto_off_sec", cfg.auto_off_sec);
     cJSON_AddNumberToObject(config, "meters_per_pulse", cfg.meters_per_pulse);
@@ -792,6 +890,15 @@ static void parse_backup_config(app_config_t *cfg, const cJSON *config, bool *wi
         if (cJSON_IsBool(v) && !cJSON_IsTrue(v) && cfg->wifi_pass[0] != '\0') {
             cfg->wifi_pass[0] = '\0';
             *wifi_changed = true;
+        }
+    }
+
+    v = cJSON_GetObjectItemCaseSensitive(config, "language");
+    if (cJSON_IsString(v) && v->valuestring != NULL) {
+        ui_language_t parsed = ui_language_from_str(v->valuestring);
+        if (parsed != s_ui_language) {
+            s_ui_language = parsed;
+            s_ui_language_dirty = true;
         }
     }
 
