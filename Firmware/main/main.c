@@ -12,7 +12,6 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "esp_netif_net_stack.h"
 #include "esp_sntp.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
@@ -22,7 +21,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lwip/ip4_addr.h"
-#include "lwip/apps/mdns.h"
+#include "mdns.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "rom/ets_sys.h"
@@ -259,9 +258,7 @@ static int64_t s_mono_anchor_us;
 static httpd_handle_t s_httpd = NULL;
 static int s_wifi_retry_count;
 static bool s_sntp_started;
-#if defined(LWIP_MDNS_RESPONDER) && LWIP_MDNS_RESPONDER
 static bool s_mdns_started;
-#endif
 static esp_netif_t *s_netif_sta = NULL;
 static esp_netif_t *s_netif_ap = NULL;
 static ui_language_t s_ui_language = UI_LANGUAGE_EN;

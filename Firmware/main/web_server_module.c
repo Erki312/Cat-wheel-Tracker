@@ -25,67 +25,54 @@ static void start_sntp_if_needed(void) {
     s_sntp_started = true;
 }
 
-#if defined(LWIP_MDNS_RESPONDER) && LWIP_MDNS_RESPONDER
-static void mdns_txt_cb(struct mdns_service *service, void *txt_userdata) {
-    (void)txt_userdata;
-    if (service == NULL) {
-        return;
-    }
-    mdns_resp_add_service_txtitem(service, "path=/", 6);
-}
-#endif
-
 static void start_mdns_if_needed(void) {
-#if defined(LWIP_MDNS_RESPONDER) && LWIP_MDNS_RESPONDER
     if (s_mdns_started) {
         return;
     }
 
-    mdns_resp_init();
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "mdns_init failed: %s", esp_err_to_name(err));
+        return;
+    }
 
-    struct netif *ap_netif =
-        (s_netif_ap != NULL) ? (struct netif *)esp_netif_get_netif_impl(s_netif_ap) : NULL;
-    struct netif *sta_netif =
-        (s_netif_sta != NULL) ? (struct netif *)esp_netif_get_netif_impl(s_netif_sta) : NULL;
+    err = mdns_hostname_set(CATWHEEL_HOSTNAME);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mdns_hostname_set failed: %s", esp_err_to_name(err));
+        return;
+    }
 
-    if (ap_netif != NULL) {
-        err_t err = mdns_resp_add_netif(ap_netif, CATWHEEL_HOSTNAME);
-        if (err != ERR_OK) {
-            ESP_LOGW(TAG, "mDNS add AP netif failed: %d", (int)err);
-        } else {
-            s8_t srv = mdns_resp_add_service(ap_netif, "Cat Wheel", "_http",
-                                             DNSSD_PROTO_TCP, 80, mdns_txt_cb, NULL);
-            if (srv < 0) {
-                ESP_LOGW(TAG, "mDNS add AP service failed: %d", (int)srv);
-            }
+    err = mdns_instance_name_set("Cat Wheel");
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "mdns_instance_name_set failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    if (!mdns_service_exists("_http", "_tcp", NULL)) {
+        mdns_txt_item_t txt[] = {
+            {.key = "path", .value = "/"},
+        };
+        err = mdns_service_add("Cat Wheel", "_http", "_tcp", 80, txt,
+                               sizeof(txt) / sizeof(txt[0]));
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "mdns_service_add failed: %s", esp_err_to_name(err));
+            return;
         }
-    }
-
-    if (sta_netif != NULL) {
-        err_t err = mdns_resp_add_netif(sta_netif, CATWHEEL_HOSTNAME);
-        if (err != ERR_OK) {
-            ESP_LOGW(TAG, "mDNS add STA netif failed: %d", (int)err);
-        } else {
-            s8_t srv = mdns_resp_add_service(sta_netif, "Cat Wheel", "_http",
-                                             DNSSD_PROTO_TCP, 80, mdns_txt_cb, NULL);
-            if (srv < 0) {
-                ESP_LOGW(TAG, "mDNS add STA service failed: %d", (int)srv);
-            }
+    } else {
+        err = mdns_service_port_set("_http", "_tcp", 80);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "mdns_service_port_set failed: %s", esp_err_to_name(err));
+            return;
         }
-    }
-
-    if (ap_netif != NULL) {
-        mdns_resp_announce(ap_netif);
-    }
-    if (sta_netif != NULL) {
-        mdns_resp_announce(sta_netif);
+        err = mdns_service_txt_item_set("_http", "_tcp", "path", "/");
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "mdns_service_txt_item_set failed: %s", esp_err_to_name(err));
+            return;
+        }
     }
 
     s_mdns_started = true;
     ESP_LOGI(TAG, "mDNS ready: http://%s.local", CATWHEEL_HOSTNAME);
-#else
-    ESP_LOGW(TAG, "mDNS responder disabled in build");
-#endif
 }
 
 static void wifi_apply_sta_config(void) {
@@ -191,14 +178,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             ESP_LOGI(TAG, "STA connected: http://" IPSTR ", mDNS: http://%s.local",
                      IP2STR(&event->ip_info.ip), CATWHEEL_HOSTNAME);
         }
-#if defined(LWIP_MDNS_RESPONDER) && LWIP_MDNS_RESPONDER
-        if (s_mdns_started && s_netif_sta != NULL) {
-            struct netif *sta_netif = (struct netif *)esp_netif_get_netif_impl(s_netif_sta);
-            if (sta_netif != NULL) {
-                mdns_resp_announce(sta_netif);
-            }
-        }
-#endif
         start_sntp_if_needed();
         refresh_time_anchor();
     }
