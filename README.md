@@ -6,6 +6,9 @@ It reads wheel pulses from an LM393 photoelectric sensor, calculates activity me
 
 The device also hosts a web interface for live monitoring, configuration, and backup/restore.
 
+![Cat in catwheel](pic_1.jpeg)
+![Webpage](pic_2.png)
+
 ## Main Features
 - Live speed, distance, and session tracking
 - Daily and total statistics:
@@ -20,6 +23,7 @@ The device also hosts a web interface for live monitoring, configuration, and ba
   - Live dashboard
   - Settings page
   - Wi-Fi setup
+  - mDNS
   - Backup download/upload (JSON)
   - Display off-time window and day/night brightness schedules
 
@@ -27,6 +31,7 @@ The device also hosts a web interface for live monitoring, configuration, and ba
 - LM393 Photoelectric Correlation Sensor
 - ESP32S3-WROOM-1-N16R8
 - 64x64 LED Matrix (HUB75, P3, 1/32 scan)
+- LM2596S DC-DC Converter
 
 ## Matrix Pin Mapping
 - `GPIO1` = `R1`
@@ -58,12 +63,14 @@ idf.py -p COMx flash monitor
 
 Replace `COMx` with your serial port (for example `COM8`).
 
-## Web Interface
+## Wifi Setup
 - If no STA Wi-Fi is configured or connection fails, the device starts an AP for setup.
 - Default AP SSID is defined in code (`CatWheelSetup`).
 - Open:
   - `http://192.168.4.1` in AP mode
   - or the STA IP shown in logs/status once connected
+
+- If STA Wi-Fi is connected, you can connect to the device over `http://catwheel.local/` or over the device's assigned IP address.
 
 ## Data and Backups
 - Runtime data and configuration are stored in NVS.
