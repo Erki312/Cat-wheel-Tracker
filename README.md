@@ -6,8 +6,8 @@ It reads wheel pulses from an LM393 photoelectric sensor, calculates activity me
 
 The device also hosts a web interface for live monitoring, configuration, and backup/restore.
 
-![Cat in catwheel](pic_1.jpeg)
-![Webpage](pic_2.png)
+![Cat in catwheel](pictures/pic_1.jpeg)
+![Webpage](pictures/pic_2.png)
 
 ## Main Features
 - Live speed, distance, and session tracking
